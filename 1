@@ -1,0 +1,297 @@
+ clc;
+clear all;
+Get_data=[1,8.85000000000000,0,77.5024025300000,0,27.0039659400000;2,11.4000000000000,0,64.6061085800000,0,25.1206486500000;3,10.6500000000000,0,73.2047494300000,0,23.7563345700000;4,10.1000000000000,0,83.4526821600000,0,30.2735938600000;5,9.75000000000000,0,96.2466285800000,0,25.5846324600000;6,9.45000000000000,0,112.357729000000,0,29.6421490200000;7,9.35000000000000,0,130.290439200000,0,136.578889000000;8,9.75000000000000,227.600000000000,59.9577288800000,0,268.714784200000;9,10.6000000000000,543.580000000000,0,0,51.3977240100000;10,11.7500000000000,986.990000000000,0,0,193.275877200000;11,13.1500000000000,1603.29000000000,0,0,536.486584400000;12,14.6000000000000,1927.70000000000,0,0,51.4381750600000;13,15.8000000000000,1906.04000000000,0,0,197.342200200000;14,16.2500000000000,981.810000000000,0,0,370.560098600000;15,15.9500000000000,567.720000000000,0,0,223.043702400000;16,15.2500000000000,180,0,0,68.6936125300000;17,14.4000000000000,14.4000000000000,0,0,123.338424800000;18,13.6500000000000,0,0,0,383.791459700000;19,12.9000000000000,0,12.5127889600000,0,22.7431168900000;20,12.1500000000000,0,40.5666510100000,0,22.2191729000000;21,11.4000000000000,0,68.4666693900000,0,23.5627998500000;22,10.6500000000000,0,95.3807468300000,0,29.7489455600000;23,9.95000000000000,0,121.644135900000,0,23.6883126600000;24,9.20000000000000,0,146.975670500000,0,24.2397834600000];
+Ta=Get_data(:,2)';  %逐时环境温度
+R=Get_data(:,3)';   %逐时总辐照强度
+Qh=Get_data(:,4)';  %热需求
+Qc=Get_data(:,5)';  %冷需求
+Er=Get_data(:,6)';  %电需求
+
+%% PV与ST模型的参数
+Area=9000 ; %屋顶的总面积     m^2  5525
+T_noct=45;%PV板的设计工作温度  °C
+C_pv1=0.12;%PV-太阳辐射系数  
+C_pv2=0.0045;%PV-温度系数      °C ^-1
+T_ref=25;   %参考温度
+C_ref=0.125;%参考效率
+
+%% 价格参数
+i1=0.03;                 % 3%年利率         
+n1=20;                   %回收年限
+Cg=0.04214;               %天然气价格:$/kW 0.04214
+Ce=0.125857;               %购电价格:$/kW  0.12857
+Cpri_co2= 0.01656;           %碳交易价格$/kg  0.01656
+Ue=850;                  %电网的CO2的转化系数:kg/kWh
+Ug=240;                  %天然气的CO2的转化系数:kg/kWh
+Cqi_pv=1;                %弃光惩罚$/kW 1
+Cqi_st=1;                %弃光惩罚$/kW 1
+Cqi_wind=0.8;              %弃风惩罚$/kW 0.8
+Cpei_e=630;              %电网的碳配额系数 kg/kWh 628
+Cpei_h=100;              %cchp的碳配额系数 kg/kWh 100
+Cchuli_co2=0;         %碳捕集后处理费用
+%% 设备参数
+ Cpgu=1350;               %PGU单位容量成本:$/kW 1350
+ Cpvt=2130;               %pv单位容量成本:$/kW 2130
+ Cst=100;                 %st单位容量成本:$/m^2 100
+ Cbattery=9000;          %电池单价:$/kW 10500
+ Chs=33;                 %储热设备单价:$/kW 33 
+ Cb=15;                 %燃烧锅炉单位容量成本:$/kW 15
+ Che=22;                  %换热器单位容量成本:$/kW 
+ Cac=216;                 %吸收式制冷单位容量成本:$/kW
+ Cec=350;                 %电制冷价格:$/kW
+ 
+ %% 其他参数
+ small=0.0001;       %解决cplex严格不等式约束
+ Vhs=0.956;               %储热设备放热效率，假设储热效率为100%
+ Vb=0.8;                  %辅助锅炉效率
+ COPac=1.8;                %吸收式制冷系数
+ COPec=4;                 %电制冷系数
+ Vhr=0.8;                 %热回收效率
+ Vhe=0.8;                 %换热器换热效率
+ Ve=0.25;                 %内燃机电效率
+ Vh=0.65;                 %内燃机热效率
+ Vgrid=0.92;              %电网传输效率
+ Vge=0.35;                %发电效率
+ Cshuai_ba=0.95;
+ Cshuai_tank=0.8;
+ Cyunx_pgu=0.02;            %pgu运行成本  $/kW  0.02
+ C_lvse=0.06026;              %新能源补贴  $/kW
+ Eta_ccu_bu=82.879; 
+
+%% 决策变量
+C=[];
+%  01变量
+% Fel_flag=binvar(24,5);
+% Ftl_flag=binvar(24,4);   
+% CCU_flag1=binvar(24,2);  
+% CCU_flag2=binvar(24,2);   
+% 设备容量
+Npgu=sdpvar(1,1);
+Npv=sdpvar(1,1);
+Nst=sdpvar(1,1);
+Nba=sdpvar(1,1);             
+Vccu=sdpvar(1,1);            
+Ntank=sdpvar(1,1); 
+Xc=0.5;  
+
+% 设备出力
+Epgu=sdpvar(1,24);
+Epv=sdpvar(1,24);
+Qst=sdpvar(1,24);
+Eba=sdpvar(1,25);
+Eba_out=sdpvar(1,24); %t时刻电池的出力
+Eba_in=sdpvar(1,24);%t时刻电池的吸收电能
+Egridin=sdpvar(1,24);
+Egridout=sdpvar(1,24); %浪费的电能 
+Qgridout=sdpvar(1,24); %浪费的热能 
+Qtank_out=sdpvar(1,24);%t时刻储热罐的出力
+Qtank_in=sdpvar(1,24);%t时刻储热罐吸收热能
+Qpgu=sdpvar(1,24);   
+Qt=sdpvar(1,25);
+Qb=sdpvar(1,24);
+Fpgu=sdpvar(1,24);
+Fb=sdpvar(1,24); 
+
+Qc1=sdpvar(1,24);
+Qc2=sdpvar(1,24);
+Qac=sdpvar(1,24);
+Eec=sdpvar(1,24);
+Qhe=sdpvar(1,24);
+Q1=sdpvar(1,24);
+E1=sdpvar(1,24);
+Nco2=sdpvar(1,24);
+Qccu=sdpvar(1,24);
+Qccu_bu=sdpvar(1,24);
+
+
+%% 固定处理设备
+% PV&ST
+  for t=1:24
+      if R(t)==0
+         C=[C,Epv(t)==0];
+         C=[C,Qst(t)==0];         
+      else       
+          T_c(t)=Ta(t)+(T_noct-20)/800*R(t);
+          T_s(t)=((35+15)/2-Ta(t))/R(t);
+          C=[C,Epv(t)==0.001*Npv*R(t)*C_ref*(1-C_pv2*(T_c(t)-T_ref)+C_pv1*log(R(t)))];%计算PV的电出力,此时单位是W
+          C=[C,Qst(t)==0.001*Nst*R(t)*(0.65-0.7*T_s(t)-0.0028*R(t)*T_s(t)*T_s(t))];%ST的发热量,此时单位是W          
+      end
+  end
+%% 各储能设备的初始状态   
+C=[C,Eba(1)==0];   %电池初始储能为0
+C=[C,Qt(1)==0];     %储热罐初始储能为0 
+%% 负荷
+for t=1:24
+  C=[C,
+  Qc1(t)==Qc(t)*Xc;               %电制冷机系统每小时制冷量 ,XC为电制冷比，Qc1为电制冷机提供的冷负荷
+  Qc2(t)==(1-Xc)*Qc(t);         %吸收式制冷机每小时制冷量,Qc2为吸收式制冷机提供的冷负荷
+  Qac(t)==Qc2(t)/COPac;      %每小时进入吸收式制冷的热量,COPac为吸收式制冷机热转冷效率
+  Eec(t)==Qc1(t)/COPec;       %电制冷机系统每小时消耗电量
+  Qhe(t)==Qh(t)/Vhe;            %用户每小时消耗热量, Qh(t)为每小时的用户热需求，Vhe为换热器的换热效率。
+  E1(t)==Er(t)+Eec(t);         %※※※※※※※※系统每小时实际总电量（为用户需求电量＋电制冷机消耗电量）※※※※※※※※
+  Q1(t)==Qhe(t)+Qac(t); ] ;%※※※※※※※※系统每小时实际需要产热量（用户热需求+电制冷机的耗热量）※※※※※※※※
+end
+
+%% 判断约束
+%    for t=1:24
+%     C=[C,sum(Fel_flag(t,:))==1]; 
+%     C=[C,sum(Ftl_flag(t,:))==1];
+%     C=[C,sum(CCU_flag1(t,:))==1]; 
+%     C=[C,sum(CCU_flag2(t,:))==1];
+%    end 
+    
+C=[C,0<=Xc<=1];
+C=[C,Nst+Npv<=Area];
+
+  for t=1:24
+%% 电出力
+%优先由PV发电，电能的流动顺序：PV--》用户用电 --》电池储能--》排空
+%PV供电量大于电负荷，内燃机不工作，且剩余电量小于t时刻电池的最大容量。
+    C=[C,implies(Epv(t)>=E1(t)>=Epv(t)-Nba+Eba(t),[Eba_out(t)==0;
+    Eba(t+1)==Eba(t)+Eba_in(t);
+    Egridin(t)==0;
+    Egridout(t)==0;%浪费的电量
+    Epgu(t)==0;
+    Fpgu(t)==0;
+    Qpgu(t)==0; %内燃机每小时产热量：随时间变化8760  
+    ])];
+    
+%PV供电量大于电负荷，内燃机不工作，且剩余电量大于t时刻电池的最大容量。 
+    C=[C,implies(Epv(t)-Nba+Eba(t)-small>=E1(t), [Eba_in(t)==Nba-Eba(t);
+    Eba_out(t)==0;
+    Eba(t+1)==Nba;
+    Egridin(t)==0;
+    Egridout(t)==Epv(t)-E1(t)-(Nba-Eba(t));%浪费的电量
+    Epgu(t)==0;
+    Fpgu(t)==0;
+    Qpgu(t)==0;
+    ])];
+     
+%PV供电量小于电负荷，电池出力，内燃机不工作。    
+    C=[C,implies(Epv(t)<=E1(t)<= Epv(t)+Eba(t),[Eba_in(t)==0;
+    Eba_out(t)==E1(t)-Epv(t);
+    Eba(t+1)==Eba(t)-Eba_out(t)/Cshuai_ba;
+    Egridin(t)==0;
+    Egridout(t)==0;%浪费的电量
+    Epgu(t)==0;
+    Fpgu(t)==0;
+    Qpgu(t)==0; %内燃机每小时产热量：随时间变化8760  
+    ])];
+
+%PV和电池供电量小于电负荷，内燃机出力。 
+    C=[C,implies(Epv(t)+Eba(t)+small <=E1(t),[Epv(t)+Eba(t)+Npgu>=E1(t);    
+    Eba_in(t)==0;
+    Eba_out(t)==Eba(t);
+    Eba(t+1)==0;
+    Egridin(t)==0;
+    Egridout(t)==0;%浪费的电量
+    Epgu(t)==E1(t)-(Epv(t)+Eba(t));
+    Fpgu(t)==Epgu(t)/0.4;
+    Qpgu(t)==Epgu(t)/0.55;
+    ])];
+     
+     %PV、电池、内燃机供电量小于电负荷，购电。    
+     % elseif Epv(t)+Ew(t)+Eba(t)+Npgu<E1(t)   
+    C=[C,implies(Epv(t)+Eba(t)+Npgu<=E1(t),[Eba_in(t)==0;
+    Eba_out(t)==Eba(t);
+    Eba(t+1)==0;
+    Egridin(t)==E1(t)-(Epv(t)+Eba(t)+Npgu);
+    Egridout(t)==0;%浪费的电量
+    Epgu(t)==Npgu;
+    Fpgu(t)==Epgu(t)/0.4;
+    Qpgu(t)==Epgu(t)/0.55; 
+    ])];
+
+%% 热出力
+%当pgu和st出力满足热需求，且剩余热量小于储热罐容量。    
+% if Qpgu(t)+Qst(t)>=Qh(t)&&Qpgu(t)+Qst(t)-Qh(t)<=Ntank-Qt(t) 
+            C=[C,implies(Qpgu(t)+Qst(t)-Ntank+Qt(t)<=Q1(t)<=Qpgu(t)+Qst(t),[Qb(t)==0;
+                Fb(t)==Qb(t)/0.8; 
+                Qtank_out(t)==0;                             
+                Qtank_in(t)==(Qpgu(t)+Qst(t)-Q1(t));%t时刻储热设备所储热量，回收热量小于最大储热量
+                Qt(t+1)==(Qt(t)+Qtank_in(t));                        
+                Qgridout(t)==0;        
+                 ])];
+                       
+%当pgu和st出力满足热需求，且剩余热量大于储热罐容量。    
+% elseif Qpgu(t)+Qst(t)>=Qh(t)&&Qpgu(t)+Qst(t)-Qh(t)>=Ntank-Qt(t)  %回收热量大于最大储热量
+            C=[C,implies(Qpgu(t)+Qst(t)-Ntank+Qt(t)>=Q1(t),[Qpgu(t)+Qst(t)>=Q1(t);
+                Qb(t)==0;
+                Fb(t)==Qb(t)/0.8; 
+                Qtank_out(t)==0;                             
+                Qtank_in(t)==Ntank-Qt(t);
+                Qt(t+1)==Qt(t)+Qtank_in(t);                        
+                Qgridout(t)==Qpgu(t)+Qst(t)-Q1(t)-(Ntank-Qt(t));              
+                ])];
+                    
+%当pgu和st出力不满足热需求，且pgu、储热罐和st出力满足热需求。    
+% elseif Qpgu(t)+Qst(t)<=Qh(t)&&Qpgu(t)+Qst(t)+Cshuai_tank*Qt(t)>=Qh(t)
+            C=[C,implies(Qpgu(t)+Qst(t)<=Q1(t)<=Qpgu(t)+Qst(t)+Cshuai_tank*Qt(t),[Qb(t)==0;
+            Fb(t)==Qb(t)/0.8; 
+            Qtank_out(t)==(Q1(t)-Qst(t)-Qpgu(t));                             
+            Qtank_in(t)==0;
+            Qt(t+1)==(Qt(t)-Qtank_out(t)/Cshuai_tank);                        
+            Qgridout(t)==0;    
+            ])];
+    
+%当pgu、储热罐和st出力不满足热需求，燃烧锅炉出力。           
+% elseif Qpgu(t)+Qst(t)<=Qh(t)&&Qpgu(t)+Qst(t)+Cshuai_tank*Qt(t)<=Qh(t)
+            C=[C,implies((Qpgu(t)+Qst(t)+Cshuai_tank*Qt(t))<=Q1(t),[Qtank_out(t)==Cshuai_tank*Qt(t);                             
+            Qtank_in(t)==0;
+            Qt(t+1)==0;                        
+            Qgridout(t)==0; 
+            Qb(t)==(Q1(t)-Qst(t)-Qpgu(t)-Cshuai_tank*Qt(t));
+            Fb(t)==Qb(t)/0.8;      
+            ])];
+
+%% 碳捕集 
+   C=[C,implies(Ug*(Fpgu(t)+Fb(t))>Vccu* 0.0523,[Nco2(t)==Vccu* 0.0523;%捕集的数量,t
+        Qccu(t)==Nco2(t)*269;])];   
+    C=[C,implies(Ug*(Fpgu(t)+Fb(t))<=Vccu* 0.0523,[Nco2(t)==Ug*(Fpgu(t)+Fb(t))* 0.0523;
+        Qccu(t)==Nco2(t)*269;])];   
+    C=[C,implies(Qgridout(t)>=Qccu(t),[Qgridout(t)==Qgridout(t)-Qccu(t);  ])];   
+    C=[C,implies(Qgridout(t)<=Qccu(t),[Qccu_bu(t)==(Qccu(t)-Qgridout(t))*Eta_ccu_bu;Qccu(t)==Qccu(t)+Qccu_bu(t)])];  
+  end  
+ %% 定容                              
+Nac=max(Qc2);                                       %吸收式制冷额定容量
+Nec=max(Qc1);                                       %电制冷额定容量
+Nhe=max(Qhe);                                       %换热器额定容量
+Nb=max(Qb);                                           %燃烧锅炉额定容量
+
+Npgu=max(Epgu);                                   %燃气轮机的容量 
+N_Est=max(Qst);                                      %ST额定容量
+N_Epv=max(Epv);                                     %PV额定容量
+%% 目标函数objective：年运行成本
+ecost=Ce*sum(Egridin);                            %购电费用
+gcost =Cg*(sum(Fpgu)+sum(Fb));            %天然气费用
+N_cf=(Ug-Cpei_h)*(sum(Fpgu)+sum(Fb))+(Ue-Cpei_e)*sum(Egridin)-sum(Nco2);%碳惩罚总量 kg
+Pri_cf=N_cf*Cpri_co2;                   %碳惩罚总价$
+Pri_co2=sum(Nco2)*Cchuli_co2;  %捕集后处理费用
+Pri_lv=(sum(Epv)+sum(Qst))*C_lvse;%新能源补贴
+Pri_yunxin=0.02*(Nac+Nhe+Nb+N_Epv+N_Est+Ntank+Nec+Nba+Npgu);
+% 运行成本
+Pri_jianshe=(Npgu*Cpgu+Nac*Cac+Nhe*Che+Nb*Cb+N_Epv*Cpvt+Nst*Cst+Ntank*Chs+Nec*Cec+Nba*Cbattery)*i1*((1+i1)^n1)/(((1+i1)^n1)-1);
+% 建设成本
+Qw_st=sum(Qgridout);
+Pri_qi=Cqi_pv*sum(Egridout)+Cqi_st*sum(Qw_st);%弃风光惩罚
+
+ATC=ecost+gcost+Pri_cf+Pri_co2-Pri_lv+Pri_yunxin+Pri_jianshe+Pri_qi;%+Big^4*flag1;
+objective=ATC;
+%% 求解
+ops = sdpsettings();
+result=optimize(C,objective,ops);
+if result.problem==1
+disp(value(Npgu));
+disp(value(Npv));
+disp(value(Nst));
+disp(value(Nba));
+disp(value(Vccu));
+disp(value(Ntank));
+disp(value(Xc));
+disp(value(objective));
+
+disp(value(E1));
+disp(value(Q1));
+else
+    disp('求解错误');
+end
